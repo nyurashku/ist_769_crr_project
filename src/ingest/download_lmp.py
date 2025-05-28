@@ -27,7 +27,7 @@ SLEEP_SEC   = 3
 def days_in_month(ym):
     d = datetime.strptime(ym + "-01", "%Y-%m-%d")
     while d.month == int(ym.split("-")[1]):
-        yield d.strftime("%Y-%m-%d")
+        yield d.strftime("%Y%m%d")
         d += timedelta(days=1)
 
 def fetch(url):
@@ -63,7 +63,8 @@ def main():
             })
             url = BASE_URL + "?" + urlencode(qs)
             print("Downloading {}".format(url))
-            tmp.write_bytes(fetch(url))
+            with tmp.open("ab") as f:
+                f.write(fetch(url))
             time.sleep(SLEEP_SEC)
 
     hdfs_target = "/data/raw/lmp/{}/lmp_{}.zip".format(YEAR_MONTH, YEAR_MONTH)
