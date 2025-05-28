@@ -9,6 +9,7 @@ services:
       CLUSTER_NAME: crr-lmp-hadoop
     volumes:
       - hadoop_namenode:/hadoop/dfs/name
+      - ./:/opt/work
     ports:
       - "9870:9870"     # NameNode UI
 
