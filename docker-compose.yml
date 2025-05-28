@@ -35,6 +35,7 @@ services:
       SPARK_EXTRA_CLASSPATH: /opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
     volumes:
       - spark_master:/bitnami/spark
+      - ./:/opt/work
     depends_on:
       - namenode
     ports:
@@ -51,6 +52,7 @@ services:
       SPARK_EXTRA_CLASSPATH: /opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
     volumes:
       - spark_worker:/bitnami/spark
+      - ./:/opt/work
     depends_on:
       - spark-master
 
