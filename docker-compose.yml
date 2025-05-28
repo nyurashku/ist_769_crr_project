@@ -1,110 +1,92 @@
-version: “3.9”
-
-###############################
-
-CAISO CRR-LMP STACK (DEV)
-
-###############################
-
-Bring-up order: HDFS ➞ Spark ➞ Cassandra ➞ Jupyter
+version: "3.9"
 
 services:
+  # ───────────── Hadoop ─────────────
+  namenode:
+    image: bde2020/hadoop-namenode:latest
+    container_name: hadoop-namenode
+    environment:
+      CLUSTER_NAME: crr-lmp-hadoop
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+    ports:
+      - "9870:9870"     # NameNode UI
 
-───────────────────────────────────────── Hadoop ──
+  datanode:
+    image: bde2020/hadoop-datanode:latest
+    container_name: hadoop-datanode
+    environment:
+      CLUSTER_NAME: crr-lmp-hadoop
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+      HDFS_CONF_dfs_replication: "1"
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    depends_on:
+      - namenode
+    ports:
+      - "9864:9864"     # DataNode UI
 
-namenode:
-image: bde2020/hadoop-namenode:2.0.0-hadoop3.3.5-java8
-container_name: hadoop-namenode
-environment:
-- CLUSTER_NAME=crr-lmp-hadoop
-volumes:
-- hadoop_namenode:/hadoop/dfs/name
-ports:
-- “9870:9870”   # NameNode UI
-networks: [hadoop]
+  # ───────────── Spark ──────────────
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: spark-master
+    environment:
+      SPARK_MODE: master
+      SPARK_EXTRA_CLASSPATH: /opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
+    volumes:
+      - spark_master:/bitnami/spark
+    depends_on:
+      - namenode
+    ports:
+      - "8080:8080"     # Spark Master UI
+      - "7077:7077"     # Spark cluster port
 
-datanode:
-image: bde2020/hadoop-datanode:2.0.0-hadoop3.3.5-java8
-container_name: hadoop-datanode
-environment:
-- CLUSTER_NAME=crr-lmp-hadoop
-- CORE_CONF_fs_defaultFS=hdfs://namenode:9000
-- HDFS_CONF_dfs_replication=1
-volumes:
-- hadoop_datanode:/hadoop/dfs/data
-depends_on: [namenode]
-ports:
-- “9864:9864”   # DataNode UI
-networks: [hadoop]
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: spark-worker
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 3G
+      SPARK_EXTRA_CLASSPATH: /opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
+    volumes:
+      - spark_worker:/bitnami/spark
+    depends_on:
+      - spark-master
 
-───────────────────────────────────────── Spark ──
+  # ─────────── Cassandra ────────────
+  cassandra:
+    image: cassandra:5
+    container_name: cassandra
+    environment:
+      CASSANDRA_CLUSTER_NAME: crr-lmp-cluster
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    ports:
+      - "9042:9042"     # CQL
 
-spark-master:
-image: bitnami/spark:3.5
-container_name: spark-master
-environment:
-- SPARK_MODE=master
-- SPARK_EXTRA_CLASSPATH=/opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
-volumes:
-- spark_master:/bitnami/spark
-ports:
-- “8080:8080”   # Spark Master UI
-- “7077:7077”   # Spark cluster port
-depends_on: [namenode]
-networks: [hadoop]
-
-spark-worker:
-image: bitnami/spark:3.5
-container_name: spark-worker
-environment:
-- SPARK_MODE=worker
-- SPARK_MASTER_URL=spark://spark-master:7077
-- SPARK_WORKER_MEMORY=3G
-- SPARK_EXTRA_CLASSPATH=/opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
-volumes:
-- spark_worker:/bitnami/spark
-depends_on: [spark-master]
-networks: [hadoop]
-
-─────────────────────────────────────── Cassandra ──
-
-cassandra:
-image: cassandra:5
-container_name: cassandra
-environment:
-- CASSANDRA_CLUSTER_NAME=crr-lmp-cluster
-- CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
-volumes:
-- cassandra_data:/var/lib/cassandra
-ports:
-- “9042:9042”   # CQL
-networks: [hadoop]
-
-───────────────────────────────────────── Jupyter ──
-
-jupyter:
-image: jupyter/pyspark-notebook:python-3.10
-container_name: jupyter
-environment:
-- JUPYTER_ENABLE_LAB=yes
-- SPARK_MASTER=spark://spark-master:7077
-- PYSPARK_PYTHON=python
-- PYSPARK_DRIVER_PYTHON=jupyter
-- PYSPARK_DRIVER_PYTHON_OPTS=“lab –LabApp.token=’’ –LabApp.allow_remote_access=True –ip=0.0.0.0”
-ports:
-- “8888:8888”
-volumes:
-- ./notebooks:/home/jovyan/work
-depends_on: [spark-master, cassandra]
-networks: [hadoop]
-
-networks:
-hadoop:
-driver: bridge
+  # ─────────── Jupyter ──────────────
+  jupyter:
+    image: jupyter/pyspark-notebook:python-3.10
+    container_name: jupyter
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      SPARK_MASTER: spark://spark-master:7077
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: jupyter
+      PYSPARK_DRIVER_PYTHON_OPTS: "lab --LabApp.token='' --ip=0.0.0.0"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    depends_on:
+      - spark-master
+      - cassandra
+    ports:
+      - "8888:8888"
 
 volumes:
-hadoop_namenode:
-hadoop_datanode:
-spark_master:
-spark_worker:
-cassandra_data:
+  hadoop_namenode:
+  hadoop_datanode:
+  spark_master:
+  spark_worker:
+  cassandra_data:
