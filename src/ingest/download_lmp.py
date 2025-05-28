@@ -67,17 +67,19 @@ def main():
             })
             url = BASE_URL + "?" + urlencode(qs)
             print("Downloading", url)
-            with tmp.open("ab") as out:                 # append, don’t overwrite
+            with tmp.open("ab") as out:                     # append to a single ZIP
                 for day in days_in_month(YEAR_MONTH):
                     for node in NODES:
-                        qs = COMMON_QS | {
+                        qs = COMMON_QS.copy()               # ❶ make a fresh dict
+                        qs.update({                         # ❷ merge fields
                             "node":          node,
-                            "startdatetime": day + "T00:00-0000",
-                            "enddatetime":   day + "T23:00-0000",
-                        }
+                            "startdatetime": day + "T0000-0000",
+                            "enddatetime":   day + "T2300-0000"
+                        })
+
                         url = BASE_URL + "?" + urlencode(qs)
                         print("Downloading", url)
-                        out.write(fetch(url))           # ➜ append chunk
+                        out.write(fetch(url))
                         time.sleep(SLEEP_SEC)
 
     hdfs_target = "/data/raw/lmp/{}/lmp_{}.zip".format(YEAR_MONTH, YEAR_MONTH)
