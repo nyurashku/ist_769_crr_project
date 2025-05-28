@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """
-download_lmp.py  YYYY-MM  →  puts daily OASIS ZIPs into HDFS
+download_lmp.py  YYYY-MM
+Fetches CAISO RTM LMPs (all APnodes) one day at a time and uploads the
+combined ZIP to HDFS at /data/raw/lmp/YYYY-MM/lmp_YYYY-MM.zip
 
 Example:
     python download_lmp.py 2024-01
@@ -8,31 +10,35 @@ Example:
 import os, sys, subprocess, requests, pathlib, time, random
 from datetime import datetime, timedelta
 
-YEAR_MONTH = sys.argv[1]           # e.g. 2024-01 (YYYY-MM)
+# ----------------------------------------------------------------------
+YEAR_MONTH = sys.argv[1]            # e.g. 2024-01  (must be YYYY-MM)
 
+# ArchiveZip query (daily) — 2 placeholders become YYYYMMDD
 OASIS = (
-    "http://oasis.caiso.com/oasisapi/SingleZip?"
+    "http://oasis.caiso.com/oasisapi/ArchiveZip?"
     "queryname=PRC_LMP&version=1&market_run_id=RTM"
-    "&startdatetime={}T00:00-0000&enddatetime={}T23:00-0000"
-    "&resultformat=6"
+    "&period=d&node=ALL_APNODE"
+    "&startdatetime={}&enddatetime={}"
 )
 
 MAX_RETRIES = 3
-SLEEP_SEC   = 3      # polite gap between calls
+SLEEP_SEC   = 3     # polite gap between calls
 
 # ----------------------------------------------------------------------
-def hdfs_put(local_path, hdfs_path):
-    subprocess.run(["hadoop", "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)], check=True)
-    subprocess.run(["hadoop", "fs", "-put", "-f", local_path, hdfs_path], check=True)
+def hdfs_put(local_path: str, hdfs_path: str) -> None:
+    subprocess.run(["hadoop", "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
+                   check=True)
+    subprocess.run(["hadoop", "fs", "-put", "-f", local_path, hdfs_path],
+                   check=True)
 
-def days_in_month(ym):
+def days_in_month(ym: str):
     d = datetime.strptime(ym + "-01", "%Y-%m-%d")
     while d.month == int(ym.split("-")[1]):
-        yield d.strftime("%Y-%m-%d")
+        yield d.strftime("%Y%m%d")          # 2024-01-03  →  20240103
         d += timedelta(days=1)
 
-def fetch(url):
-    """GET with retry on 429."""
+def fetch(url: str) -> bytes:
+    """GET with retry on HTTP 429."""
     for attempt in range(1, MAX_RETRIES + 1):
         r = requests.get(url, timeout=900)
         if r.status_code == 429:
@@ -46,17 +52,18 @@ def fetch(url):
     raise RuntimeError("OASIS kept returning 429 after {} attempts".format(MAX_RETRIES))
 
 # ----------------------------------------------------------------------
-def main():
+def main() -> None:
     tmp = pathlib.Path("/tmp/lmp_{}.zip".format(YEAR_MONTH))
     if tmp.exists():
         tmp.unlink()
 
-    for day in days_in_month(YEAR_MONTH):
-        url = OASIS.format(day, day)
+    # download & append each daily ZIP
+    for ymd in days_in_month(YEAR_MONTH):
+        url = OASIS.format(ymd, ymd)
         print("Downloading {}".format(url))
         chunk = fetch(url)
         tmp.write_bytes(chunk)
-        time.sleep(SLEEP_SEC)          # polite gap
+        time.sleep(SLEEP_SEC)              # polite gap
 
     hdfs_target = "/data/raw/lmp/{}/lmp_{}.zip".format(YEAR_MONTH, YEAR_MONTH)
     hdfs_put(str(tmp), hdfs_target)
