@@ -16,9 +16,15 @@ OASIS = (
 )
 
 def hdfs_put(local_path, hdfs_path):
-    subprocess.run(["hdfs", "dfs", "-mkdir", "-p", os.path.dirname(hdfs_path)], check=True)
-    subprocess.run(["hdfs", "dfs", "-put", "-f", local_path, hdfs_path], check=True)
-
+    # use the hadoop wrapper that ships with Spark
+    subprocess.run(
+        ["hadoop", "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
+        check=True
+    )
+    subprocess.run(
+        ["hadoop", "fs", "-put", "-f", local_path, hdfs_path],
+        check=True
+    )
 def main():
     url = OASIS.format(YEAR_MONTH, YEAR_MONTH)
     print(f"Downloading {url}")
