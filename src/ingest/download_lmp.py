@@ -36,7 +36,11 @@ def main():
     hdfs_target = "/data/raw/lmp/{}/lmp_{}.zip".format(YEAR_MONTH, YEAR_MONTH)
 
     hdfs_put(str(temp), hdfs_target)
-    print("✓ uploaded to HDFS: {}".format(hdfs_target))
+    print("Uploaded to HDFS: {}".format(hdfs_target))
+    # sanity-check size; empty ZIPs from OASIS are only a few hundred bytes
+    size = subprocess.check_output(["hadoop", "fs", "-du", "-s", hdfs_target]).split()[0]
+    if int(size) < 10000:      # <10 kB usually means “no data”
+        print("WARNING: ZIP is only {} bytes; CAISO likely returned no data".format(size))
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
