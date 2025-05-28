@@ -1,0 +1,28 @@
+```gitignore
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Jupyter
+*.ipynb_checkpoints
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Spark / Hadoop temp
+spark-warehouse/
+metastore_db/
+
+# Logs & runtime cruft
+logs/
+*.log
+
+# Docker build cache
+**/target/
+**/.gradle/
+
+# Local datasets & secrets
+data/
+.env
