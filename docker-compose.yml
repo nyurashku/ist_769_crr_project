@@ -11,15 +11,17 @@ services:
       - hadoop_namenode:/hadoop/dfs/name
       - ./:/opt/work
     ports:
-      - "9870:9870"     # NameNode UI
+      - "9870:9870"
+      - "8020:8020"
 
   datanode:
     image: bde2020/hadoop-datanode:latest
     container_name: hadoop-datanode
     environment:
       CLUSTER_NAME: crr-lmp-hadoop
-      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
       HDFS_CONF_dfs_replication: "1"
+      SERVICE_PRECONDITION: "hadoop-namenode:9870"
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
     depends_on:
@@ -33,6 +35,7 @@ services:
     container_name: spark-master
     environment:
       SPARK_MODE: master
+      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
       SPARK_EXTRA_CLASSPATH: /opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
     volumes:
       - spark_master:/bitnami/spark
@@ -48,6 +51,7 @@ services:
     container_name: spark-worker
     environment:
       SPARK_MODE: worker
+      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
       SPARK_MASTER_URL: spark://spark-master:7077
       SPARK_WORKER_MEMORY: 3G
       SPARK_EXTRA_CLASSPATH: /opt/bitnami/spark/jars/spark-cassandra-connector_2.12-3.5.0.jar
