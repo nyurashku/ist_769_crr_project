@@ -42,7 +42,7 @@ def fetch(url):
         r = requests.get(url, timeout=900)
         if r.status_code == 429:
             wait = SLEEP_SEC * attempt + random.uniform(0, 1)
-            print("429 Too Many Requests – sleeping {:.1f}s (attempt {}/{})"
+            print("429 Too Many Requests; sleeping {:.1f}s (attempt {}/{})"
                   .format(wait, attempt, MAX_RETRIES))
             time.sleep(wait)
             continue
