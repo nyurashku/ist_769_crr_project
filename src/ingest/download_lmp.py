@@ -1,39 +1,29 @@
 #!/usr/bin/env python
 """
 download_lmp.py  YYYY-MM
-Downloads daily CAISO RTM LMPs for the three zonal hubs
-   • SP15  (TH_SP15_GEN-APND)
-   • NP15  (TH_NP15_GEN-APND)
-   • ZP26  (TH_ZP26_GEN-APND)
-Combines all daily ZIPs and uploads to:
-   /data/raw/lmp/YYYY-MM/lmp_YYYY-MM.zip   (in HDFS)
-
-Example:
-    python download_lmp.py 2024-01
+Downloads CAISO RTM LMPs for SP15, NP15, ZP26 (one node-per-call) and uploads
+the combined ZIP to HDFS:
+    /data/raw/lmp/YYYY-MM/lmp_YYYY-MM.zip
 """
 import os, sys, subprocess, requests, pathlib, time, random
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
-# ---------------- configuration ------------------------------------------
-YEAR_MONTH = sys.argv[1]               # e.g. 2024-01
-NODES = "TH_SP15_GEN-APND,TH_NP15_GEN-APND,TH_ZP26_GEN-APND"
+YEAR_MONTH = sys.argv[1]                  # e.g. 2024-01
+NODES = ["TH_SP15_GEN-APND", "TH_NP15_GEN-APND", "TH_ZP26_GEN-APND"]
 
-URL_TMPL = (
-    "http://oasis.caiso.com/oasisapi/SingleZip?"
-    "queryname=PRC_LMP&version=1&market_run_id=RTM"
-    "&node={nodes}"
-    "&startdatetime={day}T00:00-0000&enddatetime={day}T23:00-0000"
-    "&resultformat=6"
-)
+BASE_URL = "http://oasis.caiso.com/oasisapi/SingleZip"
+COMMON_QS = {
+    "queryname":      "PRC_LMP",
+    "version":        "1",
+    "market_run_id":  "RTM",
+    "resultformat":   "6"
+}
 
 MAX_RETRIES = 3
 SLEEP_SEC   = 3
-# -------------------------------------------------------------------------
 
-def hdfs_put(src, dst):
-    subprocess.run(["hadoop", "fs", "-mkdir", "-p", os.path.dirname(dst)], check=True)
-    subprocess.run(["hadoop", "fs", "-put", "-f", src, dst], check=True)
-
+# ---------------- helpers -------------------------------------------------
 def days_in_month(ym):
     d = datetime.strptime(ym + "-01", "%Y-%m-%d")
     while d.month == int(ym.split("-")[1]):
@@ -52,16 +42,29 @@ def fetch(url):
         return r.content
     raise RuntimeError("Still 429 after {} retries".format(MAX_RETRIES))
 
+def hdfs_put(src, dst):
+    subprocess.run(["hadoop", "fs", "-mkdir", "-p", os.path.dirname(dst)],
+                   check=True)
+    subprocess.run(["hadoop", "fs", "-put", "-f", src, dst], check=True)
+
+# ---------------- main ----------------------------------------------------
 def main():
     tmp = pathlib.Path("/tmp/lmp_{}.zip".format(YEAR_MONTH))
     if tmp.exists():
         tmp.unlink()
 
     for day in days_in_month(YEAR_MONTH):
-        url = URL_TMPL.format(nodes=NODES, day=day)
-        print("Downloading {}".format(url))
-        tmp.write_bytes(fetch(url))
-        time.sleep(SLEEP_SEC)
+        for node in NODES:
+            qs = COMMON_QS.copy()
+            qs.update({
+                "node":          node,
+                "startdatetime": day + "T00:00-0000",
+                "enddatetime":   day + "T23:00-0000"
+            })
+            url = BASE_URL + "?" + urlencode(qs)
+            print("Downloading {}".format(url))
+            tmp.write_bytes(fetch(url))
+            time.sleep(SLEEP_SEC)
 
     hdfs_target = "/data/raw/lmp/{}/lmp_{}.zip".format(YEAR_MONTH, YEAR_MONTH)
     hdfs_put(str(tmp), hdfs_target)
