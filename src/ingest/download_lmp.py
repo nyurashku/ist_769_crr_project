@@ -27,16 +27,16 @@ def hdfs_put(local_path, hdfs_path):
     )
 def main():
     url = OASIS.format(YEAR_MONTH, YEAR_MONTH)
-    print(f"Downloading {url}")
+    print("Downloading {}".format(url))
     data = requests.get(url, timeout=900)
     data.raise_for_status()
 
-    temp = pathlib.Path(f"/tmp/lmp_{YEAR_MONTH}.zip")
+    temp = pathlib.Path("/tmp/lmp_{}.zip".format(YEAR_MONTH))
     temp.write_bytes(data.content)
-    hdfs_target = f"/data/raw/lmp/{YEAR_MONTH}/lmp_{YEAR_MONTH}.zip"
+    hdfs_target = "/data/raw/lmp/{}/lmp_{}.zip".format(YEAR_MONTH, YEAR_MONTH)
 
     hdfs_put(str(temp), hdfs_target)
-    print(f"✓ uploaded to HDFS: {hdfs_target}")
+    print("✓ uploaded to HDFS: {}".format(hdfs_target))
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
