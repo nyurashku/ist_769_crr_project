@@ -1,0 +1,6 @@
+# Python dependencies for CAISO CRR-LMP project
+pyspark==3.5.0          # matches Spark image
+cassandra-driver==3.29.1
+requests>=2.32.1
+python-dotenv>=1.0.1
+tqdm>=4.66.2
