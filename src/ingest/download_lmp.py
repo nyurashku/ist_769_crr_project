@@ -62,8 +62,8 @@ def main():
             qs = COMMON_QS.copy()
             qs.update({
                 "node":          node,
-                "startdatetime": day + "T0000-0000",   # ← no colon
-                "enddatetime":   day + "T2300-0000"
+                "startdatetime": day + "T00:00-0000",   # ← no colon
+                "enddatetime":   day + "T23:00-0000"
             })
             url = BASE_URL + "?" + urlencode(qs)
             print("Downloading", url)
