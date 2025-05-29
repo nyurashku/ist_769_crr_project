@@ -18,7 +18,7 @@ NODES = ["TH_SP15_GEN-APND",
 BASE_URL = "http://oasis.caiso.com/oasisapi/SingleZip"
 COMMON_QS = {
     "queryname":      "PRC_LMP",
-    "version":        "1",         # ← PRC_LMP must be version 1
+    "version":        "13",         # ← PRC_LMP must be version 1
     "market_run_id":  "RTM",
     "resultformat":   "6"
 }
