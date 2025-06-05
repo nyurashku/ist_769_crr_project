@@ -1,0 +1,12 @@
+# ───────────────────────────────────
+# Dockerfile.spark
+# Base: the same tag you were using
+FROM bitnami/spark:3.5
+
+# Optional: avoid pip’s user-site warnings
+ENV PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1
+
+# Copy requirement list and install
+COPY requirements.txt /tmp/requirements.txt
+RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
