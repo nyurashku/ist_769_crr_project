@@ -31,7 +31,10 @@ services:
 
   # ───────────── Spark ──────────────
   spark-master:
-    image: bitnami/spark:3.5
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    image: crr-spark:latest
     container_name: spark-master
     environment:
       SPARK_MODE: master
@@ -47,7 +50,10 @@ services:
       - "7077:7077"     # Spark cluster port
 
   spark-worker:
-    image: bitnami/spark:3.5
+    build:
+       context: .
+       dockerfile: Dockerfile.spark
+    image: crr-spark:latest
     container_name: spark-worker
     environment:
       SPARK_MODE: worker
