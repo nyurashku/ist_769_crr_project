@@ -81,9 +81,12 @@ def main(year_month, market):
             hdfs  = "/data/raw/lmp/{}/{}/{}_{}.zip".format(
                         market, year_month, node, day_str.replace("-", ""))
             hdfs_put(local, hdfs)
+
+
             size = int(subprocess.check_output(
-                       ["hadoop", "fs", "-du", "-s", hdfs]).split()[0])
+                        ["hadoop", "fs", "-du", "-s", hdfs]).split()[0])
             print("✓ uploaded → {} ({:.1f} MB)".format(hdfs, size / 1e6))
+
 
             time.sleep(1)   # be polite
 
