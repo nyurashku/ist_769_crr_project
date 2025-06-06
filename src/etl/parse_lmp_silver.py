@@ -30,10 +30,12 @@ def main():
             zf.extractall(extracted)
 
     # 2️ – now Spark can read the plain CSVs
+    csv_pattern = f"file://{extracted}/*.csv" 
+
     df = (spark.read
-                 .option("header", "true")
-                 .option("inferSchema", "true")
-                 .csv(str(extracted / "*.csv")))
+                    .option("header", "true")
+                    .option("inferSchema", "true")
+                    .csv(csv_pattern))
 
     # quick schema massage, de-duplication, etc. goes here…
 
