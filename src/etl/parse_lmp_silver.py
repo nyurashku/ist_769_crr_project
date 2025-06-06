@@ -17,11 +17,11 @@ def main():
 
     # 1️ – copy ZIPs from HDFS to a local temp dir, unzip, and load CSVs
     tmp = pathlib.Path(tempfile.mkdtemp())
-    (
-        spark.sparkContext
-             .binaryFiles(hdfs_raw)      # <path, PortableDataStream>
-             .map(lambda kv: (kv[0].split("/")[-1], kv[1].toArray()))
-             .foreach(lambda tup: (tmp / tup[0]).write_bytes(tup[1]))
+
+    (spark.sparkContext
+        .binaryFiles(hdfs_raw)                      # (full_hdfs_path, bytes)
+        .foreach(lambda kv:                        # kv[0] = path, kv[1] = bytes
+                (tmp / kv[0].split("/")[-1]).write_bytes(kv[1]))
     )
 
     # extract all zip files to tmp/extracted/
