@@ -16,7 +16,7 @@ NODES = ["TH_SP15_GEN-APND", "TH_NP15_GEN-APND", "TH_ZP26_GEN-APND"]
 BASE  = "https://oasis.caiso.com/oasisapi/SingleZip"
 COMMON = {
     "queryname":    "PRC_LMP",
-    "version":      "12",       # 12 = last “stable” one
+    "version":      "1",       # 12 = last “stable” one
     "resultformat": "6",
 }
 
