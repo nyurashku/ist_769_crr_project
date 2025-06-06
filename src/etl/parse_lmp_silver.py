@@ -12,7 +12,7 @@ def main():
              .appName("parse-lmp-silver")
              .getOrCreate())
 
-    hdfs_raw   = f"hdfs:///data/raw/lmp/{args.market}/{args.year}*/*.zip"
+    hdfs_raw = f"hdfs://hadoop-namenode:9000/data/raw/lmp/{args.market}/{args.year}*/*.zip"
     hdfs_silver = f"/data/silver/lmp/{args.market}/{args.year}"
 
     # 1️ – copy ZIPs from HDFS to a local temp dir, unzip, and load CSVs
