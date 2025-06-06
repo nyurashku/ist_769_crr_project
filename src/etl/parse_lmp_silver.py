@@ -11,9 +11,9 @@ def main():
     spark = (SparkSession.builder
              .appName("parse-lmp-silver")
              .getOrCreate())
-
-    hdfs_raw = f"hdfs://hadoop-namenode:9000/data/raw/lmp/{args.market}/{args.year}*/*.zip"
-    hdfs_silver = f"/data/silver/lmp/{args.market}/{args.year}"
+    HDFS_ROOT = "hdfs://hadoop-namenode:8020"
+    hdfs_raw    = f"{HDFS_ROOT}/data/raw/lmp/{args.market}/{args.year}*/*.zip"
+    hdfs_silver = f"{HDFS_ROOT}/data/silver/lmp/{args.market}/{args.year}"
 
     # 1️ – copy ZIPs from HDFS to a local temp dir, unzip, and load CSVs
     tmp = pathlib.Path(tempfile.mkdtemp())
