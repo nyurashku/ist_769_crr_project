@@ -15,14 +15,12 @@ def main():
     hdfs_raw    = f"{HDFS_ROOT}/data/raw/lmp/{args.market}/{args.year}*/*.zip"
     hdfs_silver = f"{HDFS_ROOT}/data/silver/lmp/{args.market}/{args.year}"
 
-    # 1️ – copy ZIPs from HDFS to a local temp dir, unzip, and load CSVs
+# 1️ – copy ZIPs from HDFS to a local temp dir, unzip, and load CSVs
     tmp = pathlib.Path(tempfile.mkdtemp())
 
     (spark.sparkContext
-        .binaryFiles(hdfs_raw)                      # (full_hdfs_path, bytes)
-        .foreach(lambda kv:                        # kv[0] = path, kv[1] = bytes
-                (tmp / kv[0].split("/")[-1]).write_bytes(kv[1]))
-    )
+        .binaryFiles(hdfs_raw)                 # (path, bytes)
+        .foreach(lambda kv: (tmp / pathlib.Path(kv[0]).name).write_bytes(kv[1])))
 
     # extract all zip files to tmp/extracted/
     extracted = tmp / "extracted"
