@@ -44,7 +44,7 @@ def fetch(url):
             return r.content
         if r.status_code == 429:
             wait = SLEEP_BASE * attempt + random.uniform(0, 1)
-            print(" 429 – sleeping {:.1f}s (retry {}/{})".format(
+            print(" 429 - sleeping {:.1f}s (retry {}/{})".format(
                   wait, attempt, MAX_RETRY))
             time.sleep(wait)
             continue
@@ -70,8 +70,8 @@ def main(year_month, market):
             print("Downloading {}".format(url))
             raw = fetch(url)
 
-            if not raw.startswith(b"PK"):
-                print("  !! got non-ZIP payload ({} bytes) – skipping"
+            if not raw.startswith(b"PK"):                
+                print("  !! got non-ZIP payload ({} bytes) - skipping"
                       .format(len(raw)))
                 continue
 
@@ -85,7 +85,7 @@ def main(year_month, market):
 
             size = int(subprocess.check_output(
                         ["hadoop", "fs", "-du", "-s", hdfs]).split()[0])
-            print("✓ uploaded → {} ({:.1f} MB)".format(hdfs, size / 1e6))
+            print("OK uploaded -> {} ({:.1f} MB)".format(hdfs, size / 1e6))
 
 
             time.sleep(1)   # be polite
