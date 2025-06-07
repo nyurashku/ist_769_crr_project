@@ -6,14 +6,23 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--market", choices=["DAM", "RTM", "RTPD"], default="DAM")
     p.add_argument("--year", required=True)
+    p.add_argument("--month", help="YYYY-MM (optional, narrows the ingest to one month)")
     args = p.parse_args()
 
     spark = (SparkSession.builder
              .appName("parse-lmp-silver")
              .getOrCreate())
     HDFS_ROOT   = "hdfs://hadoop-namenode:8020"
-    hdfs_raw    = f"{HDFS_ROOT}/data/raw/lmp/{args.market}/{args.year}*/*.zip"
-    hdfs_silver = (f"{HDFS_ROOT}/user/sparkuser/silver/lmp/{args.market}/{args.year}")
+    # ── pick input pattern ───────────────────────────────────────────
+    if args.month:
+        # e.g. 2024-02  →  /data/raw/lmp/DAM/2024-02/*.zip
+        hdfs_raw = f"{HDFS_ROOT}/data/raw/lmp/{args.market}/{args.month}/*.zip"
+        out_sub  = f"{args.year}/{args.month}"
+    else:        # whole year
+        hdfs_raw = f"{HDFS_ROOT}/data/raw/lmp/{args.market}/{args.year}*/*.zip"
+        out_sub  = f"{args.year}"
+
+    hdfs_silver = f"{HDFS_ROOT}/user/sparkuser/silver/lmp/{args.market}/{out_sub}"
 
 # 1️ – copy ZIPs from HDFS to a local temp dir, unzip, and load CSVs
     tmp = pathlib.Path(tempfile.mkdtemp())
