@@ -12,6 +12,9 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 import requests
 
+# Spark’s Bitnami image bundles a tiny Hadoop client here ↓
+HADOOP = "/opt/bitnami/spark/bin/hadoop"
+
 NODES = ["TH_SP15_GEN-APND", "TH_NP15_GEN-APND", "TH_ZP26_GEN-APND"]
 BASE  = "https://oasis.caiso.com/oasisapi/SingleZip"
 COMMON = {
@@ -25,9 +28,10 @@ SLEEP_BASE = 3          # seconds – back-off grows with retry #
 
 # ---------------------------------------------------------------------------
 def hdfs_put(local_path, hdfs_path):
-    subprocess.run(["hadoop", "fs", "-mkdir", "-p",
+    subprocess.run([HADOOP, "fs", "-mkdir", "-p",
                     os.path.dirname(hdfs_path)], check=True)
-    subprocess.run(["hadoop", "fs", "-put", "-f",
+                   
+    subprocess.run([HADOOP, "fs", "-put", "-f",
                     local_path, hdfs_path], check=True)
 
 def one_day_range(ym):
@@ -84,7 +88,7 @@ def main(year_month, market):
 
 
             size = int(subprocess.check_output(
-                        ["hadoop", "fs", "-du", "-s", hdfs]).split()[0])
+                        [HADOOP, "fs", "-du", "-s", hdfs]).split()[0])
             print("OK uploaded -> {} ({:.1f} MB)".format(hdfs, size / 1e6))
 
 
