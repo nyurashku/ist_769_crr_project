@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 
 import requests
 
+HADOOP = "/opt/bitnami/spark/bin/hadoop"
+
 # ── HDFS connection -----------------------------------------------------------
 HDFS_URI   = "hdfs://hadoop-namenode:8020"          # <─── only new constant
 HDFS_BASE  = ["hdfs", "dfs", "-fs", HDFS_URI]       # shared prefix for CLI
@@ -31,14 +33,10 @@ SLEEP_BASE = 3  # seconds – back-off grows with retry #
 # --------------------------------------------------------------------------- #
 def hdfs_put(local_path: str, hdfs_path: str) -> None:
     """Upload *local_path* to *hdfs_path* (overwriting if it exists)."""
-    subprocess.run(
-        HDFS_BASE + ["-mkdir", "-p", os.path.dirname(hdfs_path)],
-        check=True,
-    )
-    subprocess.run(
-        HDFS_BASE + ["-put", "-f", local_path, hdfs_path],
-        check=True,
-    )
+    subprocess.run([HADOOP, "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
+                check=True)
+    subprocess.run([HADOOP, "fs", "-put", "-f", local_path, hdfs_path],
+                check=True)
 
 
 def one_day_range(year_month: str):
@@ -96,10 +94,8 @@ def main(year_month: str, market: str) -> None:
             )
             hdfs_put(local, hdfs)
 
-            size = int(
-                subprocess.check_output(HDFS_BASE + ["-du", "-s", hdfs])
-                .split()[0]
-            )
+            size = int(subprocess.check_output(
+                        [HADOOP, "fs", "-du", "-s", hdfs]).split()[0])
             print(f"OK → {hdfs} ({size/1e6:.1f} MB)")
 
             os.remove(local)        # keep container tidy
