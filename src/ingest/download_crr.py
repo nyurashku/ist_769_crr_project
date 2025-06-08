@@ -16,11 +16,12 @@ from urllib3.poolmanager import PoolManager
 class TLS12Adapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kw):
         ctx = ssl.create_default_context()
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2          # no TLS 1.3
-        ctx.set_ciphers("DEFAULT:@SECLEVEL=1")                # accept RSA/SHA-1 suites
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.set_ciphers("ALL:@SECLEVEL=0")          # ← wider & sec-level 0
+        ctx.options    |= ssl.OP_LEGACY_SERVER_CONNECT  # ← allow “bad” servers
         kw["ssl_context"] = ctx
         return super().init_poolmanager(*args, **kw)
-
+        
 sess = requests.Session()
 sess.mount("https://", TLS12Adapter())
 
