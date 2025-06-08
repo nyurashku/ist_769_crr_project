@@ -2,57 +2,61 @@
 """
 download_crr.py  YYYY-MM
 
-Fetch CAISO CRR monthly auction ZIP and push to HDFS raw zone:
-    /data/raw/crr/<YYYY-MM>/CAISO_CRR_<YYYYMM>.zip
+Fetch the monthly CAISO “CRR_SEC_ML” archive for *one* month and copy it to HDFS
+  /data/raw/crr/<YYYY-MM>/CAISO_CRR_<YYYYMM>.zip
 """
-
-import os, sys, subprocess, argparse, requests
+import os, sys, subprocess, argparse
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
+import requests
 
-# ---------- config -----------------------------------------------------------
+# ── Hadoop CLI inside the Spark container ────────────────────────────────────
 HADOOP   = "/opt/hadoop/bin/hadoop"
 HDFS_URI = "hdfs://hadoop-namenode:8020"
 
-BASE = "https://oasis.caiso.com/oasisapi/SingleZip"
+def hdfs_put(local: str, hdfs_dest: str) -> None:
+    """Create parent dir (if needed) and upload *local* → *hdfs_dest*."""
+    subprocess.run([HADOOP, "fs", "-mkdir", "-p", os.path.dirname(hdfs_dest)],
+                   check=True)
+    subprocess.run([HADOOP, "fs", "-put", "-f", local, hdfs_dest], check=True)
+
+# ── CAISO OASIS query parameters ─────────────────────────────────────────────
+BASE   = "https://oasis.caiso.com/oasisapi/SingleZip"
 COMMON = {
-    "queryname":    "CRR_SEC_ML",   # **monthly** CRR auction results
+    "queryname":    "CRR_SEC_ML",
     "version":      "1",
-    "resultformat": "6",
-    "outformat":    "zip",
+    "resultformat": "6",      # ZIP output
 }
 
-# ---------------------------------------------------------------------------
-def hdfs_put(local, hdfs):
-    subprocess.run([HADOOP, "fs", "-fs", HDFS_URI,
-                    "-mkdir", "-p", os.path.dirname(hdfs)], check=True)
-    subprocess.run([HADOOP, "fs", "-fs", HDFS_URI,
-                    "-put", "-f", local, hdfs], check=True)
+def month_window(ym: str) -> tuple[str, str]:
+    """Return (‘startdatetime’, ‘enddatetime’) covering the whole month."""
+    first = datetime.strptime(ym + "-01", "%Y-%m-%d")
+    last  = (first.replace(day=28) + timedelta(days=4)).replace(day=1) \
+            - timedelta(days=1)
+    return (first.strftime("%Y%m%dT00:00-0000"),
+            last .strftime("%Y%m%dT23:00-0000"))
 
-# ---------------------------------------------------------------------------
-def main(year_month):
-    ym_nodash = year_month.replace("-", "")
-    qs = COMMON | {
-        "startdatetime": f"{ym_nodash}01T00:00-0000",
-        "enddatetime":   f"{ym_nodash}02T00:00-0000",
-    }
-    url = BASE + "?" + urlencode(qs)
+# ── main ─────────────────────────────────────────────────────────────────────
+def main(ym: str) -> None:
+    start, end = month_window(ym)
+    url = BASE + "?" + urlencode(COMMON | {"startdatetime": start,
+                                           "enddatetime":   end})
     print("Downloading", url)
+    raw = requests.get(url, timeout=300).content
 
-    r = requests.get(url, timeout=600)
-    r.raise_for_status()
+    local = f"/tmp/CAISO_CRR_{ym.replace('-', '')}.zip"
+    open(local, "wb").write(raw)
 
-    local = f"/tmp/CAISO_CRR_{ym_nodash}.zip"
-    open(local, "wb").write(r.content)
+    hdfs = f"/data/raw/crr/{ym}/CAISO_CRR_{ym.replace('-', '')}.zip"
+    hdfs_put(local, f"{HDFS_URI}{hdfs}")
+    size = int(subprocess.check_output([HADOOP, "fs", "-du", "-s", hdfs]).split()[0])
+    print(f"✅  Uploaded → {hdfs}  ({size/1e6:.1f} MB)")
+    os.remove(local)
 
-    hdfs = f"/data/raw/crr/{year_month}/CAISO_CRR_{ym_nodash}.zip"
-    hdfs_put(local, hdfs)
-    print("✅  Uploaded →", hdfs)
-
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("year_month", help="YYYY-MM")
     args = ap.parse_args()
     if len(args.year_month) != 7 or args.year_month[4] != "-":
-        sys.exit("year_month must be in YYYY-MM form (e.g. 2024-02)")
+        sys.exit("year_month must look like 2024-02")
     main(args.year_month)
