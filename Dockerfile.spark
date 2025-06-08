@@ -1,12 +1,19 @@
 # ───────────────────────────────────
 # Dockerfile.spark
-# Base: the same tag you were using
 FROM bitnami/spark:3.5
 
-# Optional: avoid pip’s user-site warnings
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1
 
-# Copy requirement list and install
+# +++ BEGIN: add a minimal Hadoop CLI (60 MB compressed; ~240 MB unpacked)
+RUN curl -L -o /tmp/hadoop.tgz \
+        https://downloads.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz \
+ && tar -xzf /tmp/hadoop.tgz -C /opt \
+ && ln -s /opt/hadoop-3.3.6 /opt/hadoop \
+ && printf 'export HADOOP_HOME=/opt/hadoop\nexport PATH=$PATH:$HADOOP_HOME/bin\n' \
+        > /etc/profile.d/hadoop.sh \
+ && rm /tmp/hadoop.tgz
+# +++ END
+
 COPY requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
