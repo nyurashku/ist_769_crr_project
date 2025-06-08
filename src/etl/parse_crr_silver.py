@@ -1,4 +1,4 @@
-cat >src/etl/parse_crr_silver.py <<'PY'
+
 #!/usr/bin/env python3
 """
 parse_crr_silver.py  --year YYYY [--month YYYY-MM]
@@ -56,5 +56,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-PY
-chmod +x src/etl/parse_crr_silver.py
