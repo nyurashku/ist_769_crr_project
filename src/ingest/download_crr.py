@@ -20,10 +20,16 @@ COMMON = {
 }
 
 def month_bounds(ym: str) -> tuple[str, str]:
+    """Return (startdatetime, enddatetime) constrained to ≤ 31 days."""
     first = datetime.strptime(ym + "-01", "%Y-%m-%d")
+
+    # first second of next month …
     next_first = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
-    return (first.strftime("%Y%m%dT00:00-0000"),
-            next_first.strftime("%Y%m%dT00:00-0000"))
+    # … then back one second → 23:59 of the last day this month
+    last = next_first - timedelta(seconds=1)
+
+    return (first.strftime("%Y%m%dT00:00-0000"),   # e.g. 20250501T00:00-0000
+            last .strftime("%Y%m%dT%H:%M-0000"))  # e.g. 20250531T23:59-0000
 
 def hdfs_put(local: str, hdfs_path: str) -> None:
     subprocess.run([HADOOP, "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
