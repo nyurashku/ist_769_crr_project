@@ -2,8 +2,8 @@
 """
 download_crr.py  YYYY-MM
 
-Fetch the monthly CAISO “CRR_SEC_ML” archive for *one* month and copy it to HDFS
-  /data/raw/crr/<YYYY-MM>/CAISO_CRR_<YYYYMM>.zip
+Fetch the monthly CAISO “CRR_SEC_ML” archive for one month and copy it to HDFS
+    hdfs://hadoop-namenode:8020/data/raw/crr/<YYYY-MM>/CAISO_CRR_<YYYYMM>.zip
 """
 import os, sys, subprocess, argparse
 from datetime import datetime, timedelta
@@ -31,8 +31,7 @@ COMMON = {
 def month_window(ym: str) -> tuple[str, str]:
     """Return (‘startdatetime’, ‘enddatetime’) covering the whole month."""
     first = datetime.strptime(ym + "-01", "%Y-%m-%d")
-    last  = (first.replace(day=28) + timedelta(days=4)).replace(day=1) \
-            - timedelta(days=1)
+    last  = (first.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     return (first.strftime("%Y%m%dT00:00-0000"),
             last .strftime("%Y%m%dT23:00-0000"))
 
@@ -42,21 +41,29 @@ def main(ym: str) -> None:
     url = BASE + "?" + urlencode(COMMON | {"startdatetime": start,
                                            "enddatetime":   end})
     print("Downloading", url)
-    raw = requests.get(url, timeout=300).content
+    r = requests.get(url, timeout=300)
+    r.raise_for_status()
 
     local = f"/tmp/CAISO_CRR_{ym.replace('-', '')}.zip"
-    open(local, "wb").write(raw)
+    open(local, "wb").write(r.content)
 
-    hdfs = f"/data/raw/crr/{ym}/CAISO_CRR_{ym.replace('-', '')}.zip"
-    hdfs_put(local, f"{HDFS_URI}{hdfs}")
-    size = int(subprocess.check_output([HADOOP, "fs", "-du", "-s", hdfs]).split()[0])
-    print(f"✅  Uploaded → {hdfs}  ({size/1e6:.1f} MB)")
+    hdfs_rel = f"/data/raw/crr/{ym}/CAISO_CRR_{ym.replace('-', '')}.zip"
+    hdfs_abs = f"{HDFS_URI}{hdfs_rel}"        # canonical HDFS URI
+
+    hdfs_put(local, hdfs_abs)
+
+    size = int(subprocess.check_output([HADOOP, "fs", "-du", "-s", hdfs_abs]).split()[0])
+    print(f"✅  Uploaded → {hdfs_abs}  ({size/1e6:.1f} MB)")
+
     os.remove(local)
 
+# ── CLI entry-point ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("year_month", help="YYYY-MM")
     args = ap.parse_args()
+
     if len(args.year_month) != 7 or args.year_month[4] != "-":
         sys.exit("year_month must look like 2024-02")
+
     main(args.year_month)
