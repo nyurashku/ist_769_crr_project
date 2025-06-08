@@ -3,15 +3,20 @@
 download_lmp.py  YYYY-MM  [--market DAM|RTM]
 
 Download daily CAISO LMP ZIPs for three hub nodes and upload them to HDFS
-       /data/raw/lmp/<market>/<YYYY-MM>/<NODE>_<YYYYMMDD>.zip
-"""
 
+    /data/raw/lmp/<market>/<YYYY-MM>/<NODE>_<YYYYMMDD>.zip
+"""
 import os, sys, time, random, subprocess, argparse
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 import requests
 
+# ── HDFS connection -----------------------------------------------------------
+HDFS_URI   = "hdfs://hadoop-namenode:8020"          # <─── only new constant
+HDFS_BASE  = ["hdfs", "dfs", "-fs", HDFS_URI]       # shared prefix for CLI
+
+# ── CAISO download details ----------------------------------------------------
 NODES = ["TH_SP15_GEN-APND", "TH_NP15_GEN-APND", "TH_ZP26_GEN-APND"]
 BASE  = "https://oasis.caiso.com/oasisapi/SingleZip"
 COMMON = {
@@ -23,21 +28,21 @@ COMMON = {
 MAX_RETRY  = 3
 SLEEP_BASE = 3  # seconds – back-off grows with retry #
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 def hdfs_put(local_path: str, hdfs_path: str) -> None:
     """Upload *local_path* to *hdfs_path* (overwriting if it exists)."""
     subprocess.run(
-        ["hdfs", "dfs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
+        HDFS_BASE + ["-mkdir", "-p", os.path.dirname(hdfs_path)],
         check=True,
     )
     subprocess.run(
-        ["hdfs", "dfs", "-put", "-f", local_path, hdfs_path],
+        HDFS_BASE + ["-put", "-f", local_path, hdfs_path],
         check=True,
     )
 
 
 def one_day_range(year_month: str):
-    """Yield datetime objects for every day in YYYY-MM."""
+    """Yield datetime objects for every day in *YYYY-MM*."""
     d = datetime.strptime(year_month + "-01", "%Y-%m-%d")
     target_month = d.month
     while d.month == target_month:
@@ -59,8 +64,7 @@ def fetch(url: str) -> bytes:
         r.raise_for_status()
     raise RuntimeError("Still hitting 429 after retries")
 
-
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 def main(year_month: str, market: str) -> None:
     for day_dt in one_day_range(year_month):
         day_str   = day_dt.strftime("%Y-%m-%d")
@@ -68,7 +72,6 @@ def main(year_month: str, market: str) -> None:
         end_str   = (day_dt + timedelta(days=1)).strftime("%Y%m%dT00:00-0000")
 
         for node in NODES:
-            # build OASIS query
             qs = COMMON | {
                 "market_run_id": market,
                 "node":          node,
@@ -79,7 +82,7 @@ def main(year_month: str, market: str) -> None:
             print("Downloading", url)
 
             raw = fetch(url)
-            if not raw.startswith(b"PK"):  # basic ZIP signature check
+            if not raw.startswith(b"PK"):
                 print(f"  !! non-ZIP payload ({len(raw)} bytes) – skipped")
                 continue
 
@@ -94,16 +97,15 @@ def main(year_month: str, market: str) -> None:
             hdfs_put(local, hdfs)
 
             size = int(
-                subprocess.check_output(["hdfs", "dfs", "-du", "-s", hdfs])
+                subprocess.check_output(HDFS_BASE + ["-du", "-s", hdfs])
                 .split()[0]
             )
             print(f"OK → {hdfs} ({size/1e6:.1f} MB)")
 
-            os.remove(local)  # keep container tidy
-            time.sleep(0.5)   # be (reasonably) polite
+            os.remove(local)        # keep container tidy
+            time.sleep(0.5)         # be (reasonably) polite
 
-
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("year_month", help="YYYY-MM")
