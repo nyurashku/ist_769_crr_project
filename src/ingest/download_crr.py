@@ -8,6 +8,7 @@ Download a CAISO monthly CRR “SEC_ML” archive and upload it to HDFS
 import argparse, os, subprocess
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
+from dateutil.relativedelta import relativedelta 
 import requests
 
 HADOOP   = "/opt/hadoop/bin/hadoop"
@@ -23,12 +24,10 @@ BASE = "https://oasis.caiso.com/oasisapi/SingleZip"
 COMMON = { "queryname": "CRR_SEC_ML", "version": "1", "resultformat": "6" }
 
 def month_window(ym: str) -> tuple[str, str]:
-    first = datetime.strptime(ym + "-01", "%Y-%m-%d")
-    start = first.strftime("%Y%m%dT00:00-0000")
-    # end = *first day of next month* @ 00:00
-    nxt   = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
-    end   = nxt.strftime("%Y%m%dT00:00-0000")
-    return start, end
+    first = datetime.strptime(ym, "%Y-%m")
+    next_ = first + relativedelta(months=+1)
+    return (first.strftime("%Y%m%dT00:00-0000"),
+            next_.strftime("%Y%m%dT00:00-0000"))
 
 def main(ym: str) -> None:
     start, end = month_window(ym)
