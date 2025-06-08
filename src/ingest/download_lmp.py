@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 
 import requests
 
-HADOOP = "/opt/bitnami/spark/bin/hadoop"
+HADOOP = "/opt/hadoop/bin/hadoop"
 
 # ── HDFS connection -----------------------------------------------------------
 HDFS_URI   = "hdfs://hadoop-namenode:8020"          # <─── only new constant
