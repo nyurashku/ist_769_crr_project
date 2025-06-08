@@ -1,129 +1,74 @@
 #!/usr/bin/env python3
 """
-download_lmp.py  YYYY-MM  [--market DAM|RTM]
+parse_lmp_silver.py  --market DAM|RTM|RTPD  --year YYYY [--month YYYY-MM]
 
-Download daily CAISO LMP ZIPs for three hub nodes and upload them to HDFS
-       /data/raw/lmp/<market>/<YYYY-MM>/<NODE>_<YYYYMMDD>.zip
+Unzip CAISO LMP files that sit in the raw HDFS zone, cast columns, de-dup,
+and write Parquet to the silver zone:
+
+    /user/sparkuser/silver/lmp/<market>/<year>/…
+    /user/sparkuser/silver/lmp/<market>/<year>/<YYYY-MM>/…
 """
-
-import os, sys, time, random, subprocess, argparse
-from datetime import datetime, timedelta
-from urllib.parse import urlencode
-import requests
-
-# ── NameNode URI used by every hdfs dfs command ───────────────────────────────
-HDFS_URI = "hdfs://namenode:8020"
-
-NODES = ["TH_SP15_GEN-APND", "TH_NP15_GEN-APND", "TH_ZP26_GEN-APND"]
-BASE  = "https://oasis.caiso.com/oasisapi/SingleZip"
-COMMON = {
-    "queryname":    "PRC_LMP",
-    "version":      "1",
-    "resultformat": "6",
-}
-
-MAX_RETRY  = 3
-SLEEP_BASE = 3  # seconds – back-off grows with retry #
+import argparse, zipfile, tempfile, pathlib, shutil
+from pyspark.sql import SparkSession
 
 # --------------------------------------------------------------------------- #
-def _abs_hdfs(path: str) -> str:
-    """Prepend the NameNode URI if *path* is an absolute HDFS path."""
-    return HDFS_URI + path if path.startswith("/") else path
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--market", choices=["DAM", "RTM", "RTPD"], default="DAM")
+    p.add_argument("--year",   required=True, help="YYYY")
+    p.add_argument("--month",  help="optional YYYY-MM (ingest just one month)")
+    args = p.parse_args()
 
+    spark = (SparkSession.builder
+             .appName("parse-lmp-silver")
+             .getOrCreate())
 
-def hdfs_put(local_path: str, hdfs_path: str) -> None:
-    """Upload *local_path* to *hdfs_path* (overwriting if it exists)."""
-    hdfs_path = _abs_hdfs(hdfs_path)
-    subprocess.run(
-        ["hdfs", "dfs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
-        check=True,
+    HDFS_ROOT = "hdfs://hadoop-namenode:8020"
+
+    # ── pick the raw input pattern and silver output path ───────────────────
+    if args.month:
+        hdfs_raw   = f"{HDFS_ROOT}/data/raw/lmp/{args.market}/{args.month}/*.zip"
+        out_subdir = f"{args.year}/{args.month}"
+    else:  # whole year
+        hdfs_raw   = f"{HDFS_ROOT}/data/raw/lmp/{args.market}/{args.year}*/*.zip"
+        out_subdir = f"{args.year}"
+
+    hdfs_silver = (
+        f"{HDFS_ROOT}/user/sparkuser/silver/lmp/{args.market}/{out_subdir}"
     )
-    subprocess.run(
-        ["hdfs", "dfs", "-put", "-f", local_path, hdfs_path],
-        check=True,
-    )
 
+    # ── 1  copy ZIPs locally & extract ──────────────────────────────────────
+    tmp = pathlib.Path(tempfile.mkdtemp())
 
-def one_day_range(year_month: str):
-    """Yield datetime objects for every day in YYYY-MM."""
-    d = datetime.strptime(year_month + "-01", "%Y-%m-%d")
-    target_month = d.month
-    while d.month == target_month:
-        yield d
-        d += timedelta(days=1)
+    (spark.sparkContext
+        .binaryFiles(hdfs_raw)            # RDD[(hdfs_path, bytes)]
+        .foreach(lambda kv: (tmp / pathlib.Path(kv[0]).name).write_bytes(kv[1])))
 
+    extracted = tmp / "extracted"
+    extracted.mkdir()
+    for z in tmp.glob("*.zip"):
+        with zipfile.ZipFile(z) as zf:
+            zf.extractall(extracted)
 
-def fetch(url: str) -> bytes:
-    """HTTP GET with polite retry/back-off."""
-    for attempt in range(1, MAX_RETRY + 1):
-        r = requests.get(url, timeout=300)
-        if r.status_code == 200:
-            return r.content
-        if r.status_code == 429:
-            wait = SLEEP_BASE * attempt + random.uniform(0, 1)
-            print(f" 429 – sleeping {wait:.1f}s (retry {attempt}/{MAX_RETRY})")
-            time.sleep(wait)
-            continue
-        r.raise_for_status()
-    raise RuntimeError("Still hitting 429 after retries")
+    # ── 2  read CSVs with Spark ─────────────────────────────────────────────
+    csv_pattern = f"file://{extracted}/*.csv"
 
+    df = (spark.read
+                .option("header", "true")
+                .option("inferSchema", "true")
+                .csv(csv_pattern))
 
-# --------------------------------------------------------------------------- #
-def main(year_month: str, market: str) -> None:
-    for day_dt in one_day_range(year_month):
-        day_str   = day_dt.strftime("%Y-%m-%d")
-        start_str = day_dt.strftime("%Y%m%dT00:00-0000")
-        end_str   = (day_dt + timedelta(days=1)).strftime("%Y%m%dT00:00-0000")
+    # (do your schema tweaks / de-dupes here if needed)
 
-        for node in NODES:
-            # build OASIS query
-            qs = COMMON | {
-                "market_run_id": market,
-                "node":          node,
-                "startdatetime": start_str,
-                "enddatetime":   end_str,
-            }
-            url = BASE + "?" + urlencode(qs)
-            print("Downloading", url)
+    # ── 3  write Parquet to silver ──────────────────────────────────────────
+    (df.repartition("OPR_DT")            # good partition column
+       .write
+       .mode("overwrite")
+       .parquet(hdfs_silver))
 
-            raw = fetch(url)
-            if not raw.startswith(b"PK"):          # basic ZIP signature check
-                print(f"  !! non-ZIP payload ({len(raw)} bytes) – skipped")
-                continue
-
-            local = f"/tmp/{node}_{day_str.replace('-', '')}.zip"
-            with open(local, "wb") as fh:
-                fh.write(raw)
-
-            hdfs_rel = (
-                f"/data/raw/lmp/{market}/{year_month}/"
-                f"{node}_{day_str.replace('-', '')}.zip"
-            )
-            hdfs_put(local, hdfs_rel)
-
-            size = int(
-                subprocess.check_output(
-                    ["hdfs", "dfs", "-du", "-s", _abs_hdfs(hdfs_rel)]
-                ).split()[0]
-            )
-            print(f"OK → {hdfs_rel} ({size/1e6:.1f} MB)")
-
-            os.remove(local)  # keep container tidy
-            time.sleep(0.5)   # be (reasonably) polite
-
+    shutil.rmtree(tmp)
+    spark.stop()
 
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("year_month", help="YYYY-MM")
-    ap.add_argument(
-        "--market", default="DAM",
-        choices=["DAM", "RTM", "RTPD"],
-        help="market_run_id (default=DAM)",
-    )
-    args = ap.parse_args()
-
-    if len(args.year_month) != 7 or args.year_month[4] != "-":
-        sys.exit("year_month must be in YYYY-MM form (e.g. 2024-02)")
-
-    main(args.year_month, args.market.upper())
+    main()
