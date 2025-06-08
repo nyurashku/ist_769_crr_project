@@ -49,7 +49,8 @@ def main() -> None:
             zf.extractall(extracted)
 
     # ── 2 – load the CSV -----------------------------------------------------
-    csv_pattern = f"file://{extracted}/*.csv"
+    # look for .csv or .CSV anywhere below  extracted/
+    csv_pattern = f"file://{extracted}/**/*.csv,file://{extracted}/**/*.CSV"
 
     df = (spark.read
                   .option("header", "true")
