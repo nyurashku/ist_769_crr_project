@@ -1,49 +1,66 @@
 #!/usr/bin/env python3
 """
-download_crr_public.py YYYY-MM
-Fetches daily *Public Market Results* XML from the CRR portal.
+download_crr.py  YYYY-MM
+
+Download one month of *public* CRR market-results from
+https://crr.caiso.com and push the concatenated XML into HDFS:
+  hdfs://hadoop-namenode:8020/data/raw/crr_public/<YYYY-MM>/MarketResults.xml
 """
-
-import os, sys, subprocess, datetime as dt, requests
+import os, sys, argparse, subprocess, datetime as dt, ssl, tempfile, shutil, requests
 from urllib.parse import urlencode
+from pathlib import Path
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 
-HADOOP   = "/opt/hadoop/bin/hadoop"
-HDFS_URI = "hdfs://hadoop-namenode:8020"
-BASE_URL = "https://crr.caiso.com/crr/resources/download/PublicMarketResults"
+# ── force TLS-1.2 + allow legacy ciphers ────────────────────────────────────
+class TLS12Adapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kw):
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2          # no TLS 1.3
+        ctx.set_ciphers("DEFAULT:@SECLEVEL=1")                # accept RSA/SHA-1 suites
+        kw["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kw)
 
-def hdfs_put(local, hdfs_path):
-    subprocess.run([HADOOP, "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
-                   check=True)
-    subprocess.run([HADOOP, "fs", "-put", "-f", local, hdfs_path], check=True)
+sess = requests.Session()
+sess.mount("https://", TLS12Adapter())
 
-def fetch_day(day: dt.date, out_dir: str):
-    next_day = day + dt.timedelta(days=1)
-    url = BASE_URL + "?" + urlencode({
-        "startDate": day.isoformat(),
-        "endDate":   next_day.isoformat(),
-    })
-    print("→", day, url)
-    xml = requests.get(url, timeout=120, verify=False).content
-    local = f"/tmp/{day}.xml"
-    open(local, "wb").write(xml)
+# ── constants ───────────────────────────────────────────────────────────────
+BASE   = "https://crr.caiso.com/crr/resources/download/PublicMarketResults"
+HADOOP = "/opt/hadoop/bin/hadoop"
+HDFS   = "hdfs://hadoop-namenode:8020"
 
-    hdfs = f"{HDFS_URI}{out_dir}/day={day}.xml"
-    hdfs_put(local, hdfs)
-    os.remove(local)
+def fetch_day(day: dt.date, out_dir: Path):
+    nxt = day + dt.timedelta(days=1)
+    params = {"startDate": day.isoformat(), "endDate": nxt.isoformat()}
+    url    = BASE + "?" + urlencode(params)
+    print(f"→ {day} {url}")
+    xml    = sess.get(url, timeout=120).content          # TLS settings already applied
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{day}.xml").write_bytes(xml)
 
-def main(year_month: str):
-    year, month = map(int, year_month.split("-"))
-    first = dt.date(year, month, 1)
-    last  = (first.replace(day=28) + dt.timedelta(days=4)).replace(day=1) \
-            - dt.timedelta(days=1)
+def hdfs_put(local_dir: Path, ym: str):
+    hdfs_dir = f"{HDFS}/data/raw/crr_public/{ym}"
+    subprocess.run([HADOOP, "fs", "-mkdir", "-p", hdfs_dir], check=True)
+    subprocess.run([HADOOP, "fs", "-put", "-f", str(local_dir / "*.xml"), hdfs_dir], shell=True, check=True)
+    out = subprocess.check_output([HADOOP, "fs", "-du", "-s", hdfs_dir]).split()[0]
+    print(f"✅  Uploaded → {hdfs_dir}  ({int(out)/1e6:.1f} MB)")
 
-    out_dir = f"/data/raw/crr_public_results/{year_month}"
-    d = first
-    while d <= last:
-        fetch_day(d, out_dir)
-        d += dt.timedelta(days=1)
+def main(ym: str):
+    first = dt.datetime.strptime(ym + "-01", "%Y-%m-%d").date()
+    next_first = (first.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+    tmp = Path(tempfile.mkdtemp())
+    day = first
+    while day < next_first:
+        fetch_day(day, tmp)
+        day += dt.timedelta(days=1)
+    hdfs_put(tmp, ym)
+    shutil.rmtree(tmp)
 
+# ── CLI ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    if len(sys.argv) != 2 or sys.argv[1][4] != "-":
-        sys.exit("Usage: download_crr_public.py YYYY-MM")
-    main(sys.argv[1])
+    ap = argparse.ArgumentParser()
+    ap.add_argument("year_month", help="YYYY-MM")
+    args = ap.parse_args()
+    if len(args.year_month) != 7 or args.year_month[4] != "-":
+        sys.exit("year_month must be like 2008-01")
+    main(args.year_month)
