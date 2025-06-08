@@ -1,80 +1,66 @@
 #!/usr/bin/env python3
 """
-parse_crr_market_results.py  --year YYYY  [--month YYYY-MM]
+download_crr.py  YYYY-MM   (recycled)
 
-Parses CAISO “Public Market Results” XML (auction clearing prices)
-found in HDFS /data/raw/crr_market/… and writes columnar Parquet to
-
-   /user/sparkuser/silver/crr_market_results/<year>/[<YYYY-MM>/]…
+Download CAISO *Public Market Results* XML for one month and upload it to HDFS
+    /data/raw/crr_market/<YYYY-MM>/PublicMarketResults_<YYYYMM>.xml
+Then it’s ready for `parse_crr_market_results.py`.
 """
+import os, sys, argparse, subprocess, requests
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
-import argparse, pathlib, tempfile, shutil, xml.etree.ElementTree as ET
-from pyspark.sql import SparkSession, Row
+# ── HDFS helpers ─────────────────────────────────────────────────────────────
+HADOOP   = "/opt/hadoop/bin/hadoop"
+HDFS_URI = "hdfs://hadoop-namenode:8020"
 
-NS = {"c": "http://crr.caiso.org/download/xml"}           # namespace helper
+def hdfs_put(local: str, hdfs_path: str) -> None:
+    """mkdir -p && put -f."""
+    subprocess.run([HADOOP, "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
+                   check=True)
+    subprocess.run([HADOOP, "fs", "-put", "-f", local, hdfs_path], check=True)
 
-def xml_to_rows(path: pathlib.Path):
-    "Yield one Python dict for every <Result> inside *path*."
-    root = ET.parse(path).getroot()
-    for r in root.findall("c:Result", NS):
-        yield {
-            "crr_id"      : int(r.findtext("c:CRRID",        default="0",     namespaces=NS)),
-            "category"    : r.findtext("c:Category",         default="",      namespaces=NS),
-            "mp"          : r.findtext("c:MarketParticipant",default="",      namespaces=NS),
-            "source"      : r.findtext("c:Source",           default="",      namespaces=NS),
-            "sink"        : r.findtext("c:Sink",             default="",      namespaces=NS),
-            "start_date"  : r.findtext("c:StartDate",        default="",      namespaces=NS),
-            "end_date"    : r.findtext("c:EndDate",          default="",      namespaces=NS),
-            "hedge_type"  : r.findtext("c:HedgeType",        default="",      namespaces=NS),
-            "crr_type"    : r.findtext("c:CRRType",          default="",      namespaces=NS),
-            "buy_sell"    : r.findtext("c:Type",             default="",      namespaces=NS),
-            "tou"         : r.findtext("c:TimeOfUse",        default="",      namespaces=NS),
-            "mw"          : float(r.findtext("c:MW",             default="0", namespaces=NS)),
-            "clearing_prc": float(r.findtext("c:ClearingPrice", default="0", namespaces=NS)),
-        }
+# ── month window helper ──────────────────────────────────────────────────────
+def month_bounds(ym: str) -> tuple[str, str]:
+    first = datetime.strptime(ym + "-01", "%Y-%m-%d")
+    next_first = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return first.strftime("%Y-%m-%d"), next_first.strftime("%Y-%m-%d")
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--year",  required=True)
-    p.add_argument("--month")              # optional YYYY-MM
-    args = p.parse_args()
+# ── main download routine ────────────────────────────────────────────────────
+def main(ym: str) -> None:
+    start, end = month_bounds(ym)
 
-    spark = (SparkSession.builder
-             .appName("parse-crr-market-results")
-             .getOrCreate())
+    # ▶▶ ***REPLACE ONLY THE `BASE` AND PARAM NAMES IF NEEDED*** ◀◀
+    BASE = "https://crr.caiso.com/crr/resources/download/PublicMarketResults"  # working endpoint
+    params = {
+        "startDate": start,   # exactly the param names the web UI sends
+        "endDate"  : end,
+        "format"   : "xml"
+    }
+    url = BASE + "?" + urlencode(params)
+    print("Downloading", url)
 
-    HDFS = "hdfs://hadoop-namenode:8020"
+    resp = requests.get(url, timeout=300)
+    resp.raise_for_status()
+    if b"<CRRDownload:MarketResults" not in resp.content:
+        sys.exit("!! response doesn’t look like MarketResults XML – aborting")
 
-    if args.month:
-        hdfs_in  = f"{HDFS}/data/raw/crr_market/{args.month}/*.xml"
-        out_sub  = f"{args.year}/{args.month}"
-    else:
-        hdfs_in  = f"{HDFS}/data/raw/crr_market/{args.year}*/*.xml"
-        out_sub  = args.year
+    local = f"/tmp/PublicMarketResults_{ym.replace('-','')}.xml"
+    open(local, "wb").write(resp.content)
 
-    hdfs_out = f"{HDFS}/user/sparkuser/silver/crr_market_results/{out_sub}"
+    hdfs_path = (f"{HDFS_URI}/data/raw/crr_market/{ym}/"
+                 f"PublicMarketResults_{ym.replace('-','')}.xml")
+    hdfs_put(local, hdfs_path)
+    size = int(subprocess.check_output(
+        [HADOOP, "fs", "-du", "-s", hdfs_path]).split()[0])
+    print(f"✅  Uploaded → {hdfs_path}  ({size/1e6:.1f} MB)")
+    os.remove(local)
 
-    # ── copy XMLs locally ────────────────────────────────────────────────────
-    tmp = pathlib.Path(tempfile.mkdtemp())
-    (spark.sparkContext
-         .binaryFiles(hdfs_in)                                   # (hdfs_path, bytes)
-         .foreach(lambda kv: (tmp / pathlib.Path(kv[0]).name)
-                             .write_bytes(kv[1])))
-
-    # ── parse every file → rows → DataFrame ─────────────────────────────────
-    rows = []
-    for f in tmp.glob("*.xml"):
-        rows.extend(xml_to_rows(f))
-
-    df = spark.createDataFrame(Row(**r) for r in rows)
-
-    # ── write out ───────────────────────────────────────────────────────────
-    (df.repartition("start_date")     # any date inside the month – good for pruning
-       .write.mode("overwrite")
-       .parquet(hdfs_out))
-
-    shutil.rmtree(tmp)
-    spark.stop()
-
+# ── CLI ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("year_month", help="YYYY-MM")
+    args = ap.parse_args()
+    if len(args.year_month) != 7 or args.year_month[4] != "-":
+        sys.exit("year_month must look like 2008-01")
+    main(args.year_month)
