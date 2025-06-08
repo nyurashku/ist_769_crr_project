@@ -1,19 +1,25 @@
-# ───────────────────────────────────
-# Dockerfile.spark
+# ────────────────────────────────────
+# Dockerfile.spark  (replace the old one)
 FROM bitnami/spark:3.5
 
-ENV PIP_NO_CACHE_DIR=1 \
-    PYTHONUNBUFFERED=1
+# ── 1. become root just for the installation steps ──
+USER root
 
-# +++ BEGIN: add a minimal Hadoop CLI (60 MB compressed; ~240 MB unpacked)
-RUN curl -L -o /tmp/hadoop.tgz \
-        https://downloads.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz \
+# grab a *small* Hadoop distro (only the client jars & bin matter)
+ARG HADOOP_VERSION=3.3.6
+RUN apt-get update && apt-get install -y curl tar \
+ && curl -L -o /tmp/hadoop.tgz \
+      https://downloads.apache.org/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz \
  && tar -xzf /tmp/hadoop.tgz -C /opt \
- && ln -s /opt/hadoop-3.3.6 /opt/hadoop \
- && printf 'export HADOOP_HOME=/opt/hadoop\nexport PATH=$PATH:$HADOOP_HOME/bin\n' \
-        > /etc/profile.d/hadoop.sh \
- && rm /tmp/hadoop.tgz
-# +++ END
+ && ln -s /opt/hadoop-${HADOOP_VERSION} /opt/hadoop \
+ && echo 'export HADOOP_HOME=/opt/hadoop'      >> /etc/profile.d/hadoop.sh \
+ && echo 'export PATH=$PATH:$HADOOP_HOME/bin'  >> /etc/profile.d/hadoop.sh \
+ && rm -rf /tmp/hadoop.tgz /var/lib/apt/lists/*
 
+# ── 2. drop back to the non-root spark user expected by Bitnami ──
+USER 1001
+
+# ── 3. misc Python deps (optional) ──
+ENV PIP_NO_CACHE_DIR=1  PYTHONUNBUFFERED=1
 COPY requirements.txt /tmp/requirements.txt
-RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt
