@@ -4,23 +4,20 @@ download_lmp.py  YYYY-MM  [--market DAM|RTM]
 
 Download daily CAISO LMP ZIPs for three hub nodes and upload them to HDFS
 
-    /data/raw/lmp/<market>/<YYYY-MM>/<NODE>_<YYYYMMDD>.zip
+  hdfs://hadoop-namenode:8020/data/raw/lmp/<market>/<YYYY-MM>/<NODE>_<YYYYMMDD>.zip
 """
 import os, sys, time, random, subprocess, argparse
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-
 import requests
 
-HADOOP = "/opt/hadoop/bin/hadoop"
+# ── local Hadoop CLI inside the Spark image ────────────────────────────────
+HADOOP      = "/opt/hadoop/bin/hadoop"           # wrapper script we installed
+HDFS_URI    = "hdfs://hadoop-namenode:8020"      # <── only one place to change
 
-# ── HDFS connection -----------------------------------------------------------
-HDFS_URI   = "hdfs://hadoop-namenode:8020"          # <─── only new constant
-HDFS_BASE  = ["hdfs", "dfs", "-fs", HDFS_URI]       # shared prefix for CLI
-
-# ── CAISO download details ----------------------------------------------------
-NODES = ["TH_SP15_GEN-APND", "TH_NP15_GEN-APND", "TH_ZP26_GEN-APND"]
-BASE  = "https://oasis.caiso.com/oasisapi/SingleZip"
+# ── CAISO query details ────────────────────────────────────────────────────
+NODES  = ["TH_SP15_GEN-APND", "TH_NP15_GEN-APND", "TH_ZP26_GEN-APND"]
+BASE   = "https://oasis.caiso.com/oasisapi/SingleZip"
 COMMON = {
     "queryname":    "PRC_LMP",
     "version":      "1",
@@ -28,15 +25,21 @@ COMMON = {
 }
 
 MAX_RETRY  = 3
-SLEEP_BASE = 3  # seconds – back-off grows with retry #
+SLEEP_BASE = 3          # seconds – back-off grows with retry #
 
-# --------------------------------------------------------------------------- #
+# ---------------------------------------------------------------------------
+
+
 def hdfs_put(local_path: str, hdfs_path: str) -> None:
     """Upload *local_path* to *hdfs_path* (overwriting if it exists)."""
-    subprocess.run([HADOOP, "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
-                check=True)
-    subprocess.run([HADOOP, "fs", "-put", "-f", local_path, hdfs_path],
-                check=True)
+    subprocess.run(
+        [HADOOP, "fs", "-fs", HDFS_URI, "-mkdir", "-p", os.path.dirname(hdfs_path)],
+        check=True,
+    )
+    subprocess.run(
+        [HADOOP, "fs", "-fs", HDFS_URI, "-put", "-f", local_path, hdfs_path],
+        check=True,
+    )
 
 
 def one_day_range(year_month: str):
@@ -62,7 +65,10 @@ def fetch(url: str) -> bytes:
         r.raise_for_status()
     raise RuntimeError("Still hitting 429 after retries")
 
-# --------------------------------------------------------------------------- #
+
+# ---------------------------------------------------------------------------
+
+
 def main(year_month: str, market: str) -> None:
     for day_dt in one_day_range(year_month):
         day_str   = day_dt.strftime("%Y-%m-%d")
@@ -70,6 +76,7 @@ def main(year_month: str, market: str) -> None:
         end_str   = (day_dt + timedelta(days=1)).strftime("%Y%m%dT00:00-0000")
 
         for node in NODES:
+            # build OASIS query
             qs = COMMON | {
                 "market_run_id": market,
                 "node":          node,
@@ -80,7 +87,7 @@ def main(year_month: str, market: str) -> None:
             print("Downloading", url)
 
             raw = fetch(url)
-            if not raw.startswith(b"PK"):
+            if not raw.startswith(b"PK"):        # basic ZIP signature check
                 print(f"  !! non-ZIP payload ({len(raw)} bytes) – skipped")
                 continue
 
@@ -88,20 +95,25 @@ def main(year_month: str, market: str) -> None:
             with open(local, "wb") as fh:
                 fh.write(raw)
 
-            hdfs = (
-                f"/data/raw/lmp/{market}/{year_month}/"
-                f"{node}_{day_str.replace('-', '')}.zip"
+            # full HDFS path (URI + absolute path)
+            hdfs_parent = f"{HDFS_URI}/data/raw/lmp/{market}/{year_month}"
+            hdfs_file   = f"{hdfs_parent}/{node}_{day_str.replace('-', '')}.zip"
+
+            hdfs_put(local, hdfs_file)
+
+            size = int(
+                subprocess.check_output(
+                    [HADOOP, "fs", "-fs", HDFS_URI, "-du", "-s", hdfs_file]
+                ).split()[0]
             )
-            hdfs_put(local, hdfs)
+            print(f"OK → {hdfs_file} ({size/1e6:.1f} MB)")
 
-            size = int(subprocess.check_output(
-                        [HADOOP, "fs", "-du", "-s", hdfs]).split()[0])
-            print(f"OK → {hdfs} ({size/1e6:.1f} MB)")
+            os.remove(local)          # keep container tidy
+            time.sleep(0.5)           # be (reasonably) polite)
 
-            os.remove(local)        # keep container tidy
-            time.sleep(0.5)         # be (reasonably) polite
 
-# --------------------------------------------------------------------------- #
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("year_month", help="YYYY-MM")
