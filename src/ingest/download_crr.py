@@ -1,68 +1,80 @@
 #!/usr/bin/env python3
 """
-download_crr.py  YYYY-MM
+parse_crr_market_results.py  --year YYYY  [--month YYYY-MM]
 
-Fetch the monthly CAISO *auction* CRR Clearing-Prices archive and copy it to
-  /data/raw/crr/<YYYY-MM>/CAISO_CRR_<YYYYMM>.zip   (in HDFS)
+Parses CAISO “Public Market Results” XML (auction clearing prices)
+found in HDFS /data/raw/crr_market/… and writes columnar Parquet to
+
+   /user/sparkuser/silver/crr_market_results/<year>/[<YYYY-MM>/]…
 """
-import os, sys, argparse, subprocess, tempfile, zipfile
-from datetime import datetime, timedelta
-import requests
-from urllib.parse import urlencode
 
-HADOOP = "/opt/hadoop/bin/hadoop"
-HDFS_URI = "hdfs://hadoop-namenode:8020"
-BASE = "https://oasis.caiso.com/oasisapi/SingleZip"
-COMMON = {
-    "queryname": "CRR_CLEARING",
-    "version":   "1",
-    "resultformat": "6",      # ZIP
-}
+import argparse, pathlib, tempfile, shutil, xml.etree.ElementTree as ET
+from pyspark.sql import SparkSession, Row
 
-def month_bounds(ym: str) -> tuple[str, str]:
-    """Return (startdatetime, enddatetime) constrained to ≤ 31 days."""
-    first = datetime.strptime(ym + "-01", "%Y-%m-%d")
+NS = {"c": "http://crr.caiso.org/download/xml"}           # namespace helper
 
-    # first second of next month …
-    next_first = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
-    # … then back one second → 23:59 of the last day this month
-    last = next_first - timedelta(seconds=1)
+def xml_to_rows(path: pathlib.Path):
+    "Yield one Python dict for every <Result> inside *path*."
+    root = ET.parse(path).getroot()
+    for r in root.findall("c:Result", NS):
+        yield {
+            "crr_id"      : int(r.findtext("c:CRRID",        default="0",     namespaces=NS)),
+            "category"    : r.findtext("c:Category",         default="",      namespaces=NS),
+            "mp"          : r.findtext("c:MarketParticipant",default="",      namespaces=NS),
+            "source"      : r.findtext("c:Source",           default="",      namespaces=NS),
+            "sink"        : r.findtext("c:Sink",             default="",      namespaces=NS),
+            "start_date"  : r.findtext("c:StartDate",        default="",      namespaces=NS),
+            "end_date"    : r.findtext("c:EndDate",          default="",      namespaces=NS),
+            "hedge_type"  : r.findtext("c:HedgeType",        default="",      namespaces=NS),
+            "crr_type"    : r.findtext("c:CRRType",          default="",      namespaces=NS),
+            "buy_sell"    : r.findtext("c:Type",             default="",      namespaces=NS),
+            "tou"         : r.findtext("c:TimeOfUse",        default="",      namespaces=NS),
+            "mw"          : float(r.findtext("c:MW",             default="0", namespaces=NS)),
+            "clearing_prc": float(r.findtext("c:ClearingPrice", default="0", namespaces=NS)),
+        }
 
-    return (first.strftime("%Y%m%dT00:00-0000"),   # e.g. 20250501T00:00-0000
-            last .strftime("%Y%m%dT%H:%M-0000"))  # e.g. 20250531T23:59-0000
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--year",  required=True)
+    p.add_argument("--month")              # optional YYYY-MM
+    args = p.parse_args()
 
-def hdfs_put(local: str, hdfs_path: str) -> None:
-    subprocess.run([HADOOP, "fs", "-mkdir", "-p", os.path.dirname(hdfs_path)],
-                   check=True)
-    subprocess.run([HADOOP, "fs", "-put", "-f", local, hdfs_path], check=True)
+    spark = (SparkSession.builder
+             .appName("parse-crr-market-results")
+             .getOrCreate())
 
-def main(ym: str) -> None:
-    start, end = month_bounds(ym)
-    url = BASE + "?" + urlencode(COMMON | {"startdatetime": start,
-                                           "enddatetime":   end})
-    print("Downloading", url)
-    raw = requests.get(url, timeout=300).content
+    HDFS = "hdfs://hadoop-namenode:8020"
 
-    # quick inspection: does the ZIP hold at least one *.csv?
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
-        tmp.write(raw)
-    with zipfile.ZipFile(tmp.name) as zf:
-        csvs = [m for m in zf.namelist() if m.lower().endswith(".csv")]
-        if not csvs:
-            print("!! ZIP contains no CSVs – aborting")
-            os.remove(tmp.name)
-            sys.exit(1)
+    if args.month:
+        hdfs_in  = f"{HDFS}/data/raw/crr_market/{args.month}/*.xml"
+        out_sub  = f"{args.year}/{args.month}"
+    else:
+        hdfs_in  = f"{HDFS}/data/raw/crr_market/{args.year}*/*.xml"
+        out_sub  = args.year
 
-    hdfs_path = f"{HDFS_URI}/data/raw/crr/{ym}/CAISO_CRR_{ym.replace('-','')}.zip"
-    hdfs_put(tmp.name, hdfs_path)
-    size = int(subprocess.check_output([HADOOP, "fs", "-du", "-s", hdfs_path]).split()[0])
-    print(f"✅  Uploaded → {hdfs_path}  ({size/1e6:.1f} MB)")
-    os.remove(tmp.name)
+    hdfs_out = f"{HDFS}/user/sparkuser/silver/crr_market_results/{out_sub}"
+
+    # ── copy XMLs locally ────────────────────────────────────────────────────
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    (spark.sparkContext
+         .binaryFiles(hdfs_in)                                   # (hdfs_path, bytes)
+         .foreach(lambda kv: (tmp / pathlib.Path(kv[0]).name)
+                             .write_bytes(kv[1])))
+
+    # ── parse every file → rows → DataFrame ─────────────────────────────────
+    rows = []
+    for f in tmp.glob("*.xml"):
+        rows.extend(xml_to_rows(f))
+
+    df = spark.createDataFrame(Row(**r) for r in rows)
+
+    # ── write out ───────────────────────────────────────────────────────────
+    (df.repartition("start_date")     # any date inside the month – good for pruning
+       .write.mode("overwrite")
+       .parquet(hdfs_out))
+
+    shutil.rmtree(tmp)
+    spark.stop()
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("year_month", help="YYYY-MM")
-    args = ap.parse_args()
-    if len(args.year_month) != 7 or args.year_month[4] != "-":
-        sys.exit("year_month must be like 2025-05")
-    main(args.year_month)
+    main()
