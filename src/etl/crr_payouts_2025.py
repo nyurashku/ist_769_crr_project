@@ -70,15 +70,13 @@ out = (
       .withColumn("payout_usd",    F.col("realized_cong") * F.col("cleared_mw"))
       .withColumn("opr_dt",        F.to_date("hour_utc"))
       .withColumn("load_ts",       F.current_timestamp())
-
-      # ★ rename to match Cassandra column name ★
       .withColumnRenamed("MARKET_NAME", "market_name")
-
-      .select("market_name", "opr_dt", "hour_ending", "TIME_OF_USE",
-              "apnode_src",  "apnode_sink",
-              "cleared_mw",  "lmp_source", "lmp_sink",
-              "realized_cong", "payout_usd", "load_ts")
+      .withColumnRenamed("TIME_OF_USE", "time_of_use")      # ▼ rename
+      .select(  "market_name", "opr_dt", "hour_ending", "time_of_use",
+                "apnode_src",  "apnode_sink",
+                "cleared_mw",  "realized_cong", "payout_usd", "load_ts")
 )
+
 
 # ── 5  write to Cassandra ────────────────────────────────────────────
 (out.write
