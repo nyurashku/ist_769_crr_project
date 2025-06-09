@@ -63,19 +63,22 @@ with_src  = (with_sink
                    (F.col("hour_utc")   == F.col("lx.lmp_hour")),
                    "left")
              .withColumnRenamed("lmp_val", "lmp_source"))
+# ── 4  realised congestion & payout ──────────────────────────────────────
+out = (
+    with_src
+      .withColumn("realized_cong", F.col("lmp_sink") - F.col("lmp_source"))
+      .withColumn("payout_usd",    F.col("realized_cong") * F.col("cleared_mw"))
+      .withColumn("opr_dt",        F.to_date("hour_utc"))
+      .withColumn("load_ts",       F.current_timestamp())
 
-# ── 4  realised congestion & payout ───────────────────────────────────
-out = (with_src
-       .withColumn("realized_cong", F.col("lmp_sink") - F.col("lmp_source"))
-       .withColumn("payout_usd",    F.col("realized_cong") * F.col("cleared_mw"))
-       .withColumn("opr_dt",        F.to_date("hour_utc"))
-       .withColumn("load_ts",       F.current_timestamp())
-       .select("MARKET_NAME","opr_dt","hour_ending","TIME_OF_USE",
-               "apnode_src","apnode_sink",
-               "cleared_mw","lmp_source","lmp_sink",
-               "realized_cong","payout_usd","load_ts"))
+      # ★ rename to match Cassandra column name ★
+      .withColumnRenamed("MARKET_NAME", "market_name")
 
-print("row-count:", out.count())        #  ← keep for one run to sanity-check
+      .select("market_name", "opr_dt", "hour_ending", "TIME_OF_USE",
+              "apnode_src",  "apnode_sink",
+              "cleared_mw",  "lmp_source", "lmp_sink",
+              "realized_cong", "payout_usd", "load_ts")
+)
 
 # ── 5  write to Cassandra ────────────────────────────────────────────
 (out.write
