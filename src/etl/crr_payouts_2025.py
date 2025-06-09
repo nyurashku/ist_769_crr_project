@@ -12,7 +12,6 @@ CRR_SRC  = "hdfs://hadoop-namenode:8020/user/sparkuser/silver/crr_clearing/2025"
 LMP_SRC  = "hdfs://hadoop-namenode:8020/user/sparkuser/silver/lmp/DAM/2025/*"
 KEYSPACE = "caiso"
 TABLE    = "crr_payouts"
-MW_COL   = F.lit(1.0)                       # placeholder until true MW known
 # ─────────────────────────────────────────────────────────────────────────
 
 spark = (
