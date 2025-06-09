@@ -49,11 +49,22 @@ crr = (crr
                "hour_local",
                MW_COL.alias("MW")))
 
-# 3) join CRR (sink + source) with LMPs
 lmp_sel = (lmp
-           .select(F.col("OPR_DT").alias("hour_utc"),
+           .filter(F.col("LMP_TYPE") == "LMP")       # keep the actual price rows
+           # hour-ending is 1-24 → subtract 1 to get hour-beginning
+           .withColumn(
+               "hour_utc",
+               F.to_timestamp(
+                   F.concat_ws(' ', F.col("OPR_DT"),
+                               (F.col("OPR_HR") - 1).cast("int")),
+                   "yyyy-MM-dd H"
+               )
+           )
+           .select("hour_utc",
                    F.col("NODE").alias("APNODE_ID"),
-                   F.col("LMP_PRC").alias("LMP")))
+                   F.col("MW").alias("LMP"))
+          )
+
 
 # sink join
 crr_sink = (crr.alias("c")
