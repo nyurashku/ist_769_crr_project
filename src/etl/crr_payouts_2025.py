@@ -14,13 +14,15 @@ KEYSPACE = "caiso"
 TABLE    = "crr_payouts"
 
 # dummy MW until you add real cleared-MW from the CRR file
-MW_COL = F.lit(1.0)
+
 
 spark = (SparkSession.builder
          .appName("crr-payouts-2025")
          .config("spark.cassandra.connection.host", "cassandra")
          .config("spark.sql.session.timeZone", "UTC")
          .getOrCreate())
+
+MW_COL = F.lit(1.0)
 
 # ─── 1. load sources ────────────────────────────────────────────────────
 crr = spark.read.parquet(CRR_SRC)
