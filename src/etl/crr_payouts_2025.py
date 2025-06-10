@@ -4,6 +4,7 @@ crr_payouts_2025.py – join 2025 CRR clearing with DAM LMPs,
 write realised payouts to Cassandra (keyspace caiso.table crr_payouts)
 """
 from pyspark.sql import SparkSession, functions as F, types as T
+from pyspark.sql import Window
 
 CRR_SRC  = "hdfs://hadoop-namenode:8020/user/sparkuser/silver/crr_clearing/2025"
 LMP_SRC  = "hdfs://hadoop-namenode:8020/user/sparkuser/silver/lmp/DAM/2025/*"
@@ -23,21 +24,22 @@ lmp = (spark.read.parquet(LMP_SRC)
            .filter("LMP_TYPE = 'LMP'"))
 
 # ── 2  explode CRR rows into hourly UTC timestamps ───────────────────
-@F.udf(T.ArrayType(T.TimestampType()))
-def hours_in_tou(st, et, tou):
-    import pandas as pd
-    rng = pd.date_range(st, et, freq="1H", tz="US/Pacific", inclusive="left")
-    rng = (rng[(7 <= rng.hour) & (rng.hour < 23)]
-           if tou == "ON"
-           else rng[(rng.hour < 7) | (rng.hour >= 23)])
-    return list(rng.tz_convert("UTC"))
-
 crr = (crr
-       .withColumn("hour_utc",   F.explode(hours_in_tou("START_DATE","END_DATE","TIME_OF_USE")))
+       .withColumn("start_utc", F.to_utc_timestamp("START_DATE",  "US/Pacific"))
+       .withColumn("end_utc",   F.to_utc_timestamp("END_DATE",    "US/Pacific"))
+       # generate an array of hourly instants [start, end)
+       .withColumn("hour_arr",
+                   F.expr("sequence(start_utc, end_utc - INTERVAL 1 HOUR, INTERVAL 1 HOUR)"))
+       .withColumn("hour_utc",  F.explode("hour_arr"))
        .withColumn("hour_local", F.from_utc_timestamp("hour_utc", "US/Pacific"))
-       .withColumn("hour_ending", F.hour("hour_local") + 1)       # 1-24 PPT
+       .filter(  # keep ON / OFF hours
+           F.when(F.col("TIME_OF_USE") == "ON",
+                  (F.hour("hour_local") >= 7) & (F.hour("hour_local") < 23))
+            .otherwise(
+                  (F.hour("hour_local") < 7) | (F.hour("hour_local") >= 23)))
+       .withColumn("hour_ending", F.hour("hour_local") + 1)
        .withColumnRenamed("APNODE_ID", "apnode_sink")
-       .select("MARKET_NAME","TIME_OF_USE","hour_utc","hour_ending",
+       .select("MARKET_NAME", "TIME_OF_USE", "hour_utc", "hour_ending",
                "apnode_sink", MW_COL.alias("cleared_mw")))
 
 # ── 3  shape LMP table  (NOTE: rename the timestamp!) ────────────────
